@@ -6,6 +6,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from transformers import AdamW, get_linear_schedule_with_warmup
+from model import NumberPretrainerConfig, NumberPretrainer
+import neptune
 
 from utils import compute_metrics, get_label, MODEL_CLASSES
 
@@ -22,6 +24,9 @@ class Trainer(object):
         self.label_lst = get_label(args)
         self.num_labels = len(self.label_lst)
 
+        self.config_numpre = NumberPretrainerConfig()
+
+        self.numpre_model = NumberPretrainer(self.config_numpre)
         self.config_class, self.model_class, _ = MODEL_CLASSES[args.model_type]
 
         self.config = self.config_class.from_pretrained(args.model_name_or_path,
@@ -80,13 +85,22 @@ class Trainer(object):
             for step, batch in enumerate(epoch_iterator):
                 self.bert.train()
                 batch = tuple(t.to(self.device) for t in batch)  # GPU or CPU
-                inputs = {'input_ids': batch[0],
-                          'attention_mask': batch[1],
-                          'labels': batch[4]}
+                numpre_inputs = {'input_val': batch[2], 'labels': batch[5]}
+                bert_inputs = {'input_ids': batch[1],
+                          'attention_mask': batch[3],
+                          'labels': batch[5]}
                 if self.args.model_type != 'distilkobert':
-                    inputs['token_type_ids'] = batch[2]
-                outputs = self.bert(**inputs)
-                loss = outputs[0]
+                    bert_inputs['token_type_ids'] = batch[4]
+                outputs = self.bert(**bert_inputs)
+                numpre_loss = self.numpre_model(numpre_inputs)  # NumberPretrainer loss
+                loss = outputs[0]  # BertForSequenceClassification loss
+
+                combined_loss = numpre_loss + loss  # Multi-task loss
+
+                if self.args.logger:
+                    neptune.log_metric('BERT Loss', loss.item())
+                    neptune.log_metric('NumPre Loss', numpre_loss.item())
+                    neptune.log_metric('Combined Loss', combined_loss.item())
 
                 if self.args.gradient_accumulation_steps > 1:
                     loss = loss / self.args.gradient_accumulation_steps
