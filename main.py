@@ -1,4 +1,6 @@
 import argparse
+
+from trainer import Trainer
 from utils import init_logger, load_tokenizer, set_seed, MODEL_CLASSES, MODEL_PATH_MAP
 from preprocess import load_and_cache_examples
 
@@ -12,9 +14,10 @@ def set_argument():
     parser.add_argument("--train_filepath", default="train.csv", type=str, help="File Path")
     parser.add_argument("--dev_filepath", default="validation.csv", type=str, help="File Path")
     parser.add_argument("--test_filepath", default="test.csv", type=str, help="File Path")
+    parser.add_argument("--model_dir", default="./model", type=str, help="Path to save, load model")
     
     parser.add_argument("--model_type", default="kobert", type=str, help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
-    parser.add_argument("--model_name_or_path", default="baeminBERT", type=str, help="Model Name")
+    parser.add_argument("--model_name_or_path", default="monologg/kobert", type=str, help="Model Name")
     parser.add_argument('--seed', default=42, type=int, help="random seed for initialization")
 
     parser.add_argument("--train_batch_size", default=32, type=int, help="Batch size for training.")
@@ -47,9 +50,17 @@ def main(args):
 
     tokenizer = load_tokenizer(args)
     train_dataset = load_and_cache_examples(args, tokenizer, mode="train")
-    dev_dataset = load_and_cache_examples(args, tokenizer, mode="dev")
+    # TODO: dev_dataset = load_and_cache_examples(args, tokenizer, mode="dev")
     # test_dataset = load_and_cache_examples(args, tokenizer, mode="test")
     # TODO: trainer = Trainer(args, train_dataset, dev_dataset, test_dataset)
+    trainer = Trainer(args, train_dataset)
+
+    if args.do_train:
+        trainer.train()
+
+    # if args.do_eval:
+    #     trainer.load_model()
+    #     trainer.evaluate("test")
 
 
 if __name__ == "__main__":
