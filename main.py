@@ -1,4 +1,5 @@
 import argparse
+import neptune
 
 from trainer import Trainer
 from utils import init_logger, load_tokenizer, set_seed, MODEL_CLASSES, MODEL_PATH_MAP
@@ -8,7 +9,6 @@ from preprocess import load_and_cache_examples
 def set_argument():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data_dir", default="./data", type=str, help="Training dataset directory")
-    parser.add_argument("--logger", default=False, type=bool, help="Logger Type")
     parser.add_argument("--task", default="baemin", type=str, help="Task to handle")
     parser.add_argument("--mode", default="train", type=str, help="Execution type")
     parser.add_argument("--train_filepath", default="train.csv", type=str, help="File Path")
@@ -39,6 +39,7 @@ def set_argument():
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the test set.")
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
+    parser.add_argument("--logger", action="store_true", help="Activate logger")
     args = parser.parse_args()
     args.model_name_or_path = MODEL_PATH_MAP[args.model_type]
     return args
@@ -47,6 +48,11 @@ def set_argument():
 def main(args):
     init_logger()
     set_seed(args)
+
+    if args.logger:
+        neptune.init("wjdghks950/sandbox")
+        neptune.create_experiment(name="Fake Detection Model for AI Championship")
+        neptune.append_tag("BertForSequenceClassification", "finetuning", "fake detection")
 
     tokenizer = load_tokenizer(args)
     train_dataset = load_and_cache_examples(args, tokenizer, mode="train")
@@ -61,6 +67,7 @@ def main(args):
     # if args.do_eval:
     #     trainer.load_model()
     #     trainer.evaluate("test")
+    neptune.stop()
 
 
 if __name__ == "__main__":
