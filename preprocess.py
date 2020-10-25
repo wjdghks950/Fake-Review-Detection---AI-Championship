@@ -96,7 +96,7 @@ class BaeminProcessor(object):
             df = pd.DataFrame(columns=headers)
             for i, row in enumerate(tqdm(data_reader)):
                 df.loc[i] = row[:24]
-                if i > 1000:  # TODO: set to 1000 instances due to speed limit
+                if i > 500000:  # TODO: set to 1000 instances due to speed limit
                     break
         print("Data Length: ", df.shape[0])
         # dataset = _create_sample(df)
@@ -108,7 +108,7 @@ class BaeminProcessor(object):
         if mode == "train":
             num_data = input_data.shape[0]
             # Extract a single instance
-            for i in tqdm(range(num_data), desc="Create Baemin Order Samples"):
+            for i in tqdm(range(num_data), desc="(Train) Create Baemin Order Samples"):
                 # Remove cancelled orders, no review instances (any other unnecessary attributes if any)
                 if input_data.iloc[i]['review_yn'] != '0' or input_data.iloc[i]['ord_prog_cd'] != "주문취소":
                     # print(input_data.iloc[i])
@@ -136,7 +136,11 @@ class BaeminProcessor(object):
             print("[Data Example List Created.]\n")
             print('Dataset length: ', len(examples))
         elif mode == "dev":
-            pass # TODO: Implement for validation.csv
+            num_data = input_data.shape[0]
+            for i in tqdm(range(num_data), desc="(Dev) Create Baemin Order Samples"):
+                ord_instance = input_data.iloc[i]
+                # example = 
+                # TODO: Implement for validation.csv
 
         return examples
 
@@ -221,7 +225,7 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
             rating = int(float(example.rating)) if len(example.rating) < 3 else 0
             nontext_features = [item_quantity, cpn_use_cnt, ord_price, rating]
         else:
-            continue # TODO: What to do with erroneous instances?
+            continue  # TODO: What to do with erroneous instances?
 
         '''
         1) Everything else is label `0`
@@ -229,12 +233,11 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
         3) If review_yn == 1 and (len(ord_msg) < 3 or ord_msg == null), then label `2` (review_fraud)
         4) If cpn_use_cnt == 0 and ord_price < 10000, then label `3` (coupon fraud)
         '''
-
         label_id = 0
         item_name_list = re.split(',|\+', example.item_name)
         if len(item_name_list) < 2 and int(example.ord_price) < 10000:
             label_id = 1
-        elif int(example.review_yn) == 1 and (len(example.ord_msg) < 3 or example.ord_msg=='null'):
+        elif int(example.review_yn) == 1 and (len(example.ord_msg) < 3 or example.ord_msg == 'null'):
             label_id = 2
         elif int(example.cpn_use_cnt) == 0 and int(example.ord_price) < 10000:
             label_id = 3
@@ -260,7 +263,6 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
     return features
 
 
-# TODO: Use the KoBertTokenizer from monologg
 # TODO: Store the CLS representation produced by BERT as a representation for example.shop_no
 def load_and_cache_examples(args, tokenizer, mode):
     processor = processors[args.task](args)
@@ -289,13 +291,16 @@ def load_and_cache_examples(args, tokenizer, mode):
         torch.save(features, cached_features_file)
 
     # Convert to Tensors and build dataset
+    all_shop_no = torch.tensor([f.shop_no for f in features], dtype=str)
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_nontext_features = torch.tensor([f.input_ids for f in features], dtype=torch.float)
     all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
     all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
     all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
+    print('all_input_ids: ', all_input_ids.shape)
+    print('all_label_ids: ', all_label_ids.shape)
 
-    dataset = TensorDataset(all_input_ids, all_nontext_features, all_attention_mask,
+    dataset = TensorDataset(all_shop_no, all_input_ids, all_nontext_features, all_attention_mask,
                             all_token_type_ids, all_label_ids)
 
     print("Dataset Preprocessing Complete!")
