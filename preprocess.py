@@ -153,7 +153,7 @@ class BaeminProcessor(object):
             num_data = input_data.shape[0]
             for i in tqdm(range(num_data), desc="(Dev) Create Baemin Order Samples"):
                 ord_instance = input_data.iloc[i]
-                print("ord_instance[shop_no]: ", ord_instance)
+                # print("ord_instance[shop_no]: ", ord_instance)
                 example = OrderExample(
                     shop_no=ord_instance['shop_no'],  # prime input
                     ord_dt=ord_instance['ord_dt'],
@@ -359,7 +359,7 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
                               token_type_ids=token_type_ids,
                               label_id=label_id
                             )
-            )      
+            )
 
     return features
 

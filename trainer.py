@@ -123,8 +123,8 @@ class Trainer(object):
                     self.bert.zero_grad()
                     global_step += 1
 
-                    # if self.args.logging_steps > 0 and global_step % self.args.logging_steps == 0:
-                    #     self.evaluate(shop_no_embedding, "test")  # Only test set available for NSMC
+                    if self.args.logging_steps > 0 and global_step % self.args.logging_steps == 0:
+                        self.evaluate("dev")
 
                     if self.args.save_steps > 0 and global_step % self.args.save_steps == 0:
                         self.save_model()
@@ -139,7 +139,7 @@ class Trainer(object):
 
         return global_step, tr_loss / global_step
 
-    def evaluate(self, shop_no_embedding, mode):
+    def evaluate(self, mode):
         if mode == 'test':
             dataset = self.test_dataset
         elif mode == 'dev':
