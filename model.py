@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+
 class NumberPretrainerConfig(object):
     def __init__(
         self,
@@ -12,7 +13,7 @@ class NumberPretrainerConfig(object):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
-        
+
 
 class NumberPretrainer(nn.Module):
     def __init__(self, config):
@@ -26,5 +27,16 @@ class NumberPretrainer(nn.Module):
         out = self.linear3(self.linear2(self.linear1(input_val)))
         loss_fct = nn.CrossEntropyLoss()
         loss = loss_fct(out, labels)
+        return out, loss
+
+
+class Aggregator(nn.Module):
+    def __init__(self, config):
+        super(Aggregator, self).__init__()
+        self.aggregate = nn.Linear(config.hidden_size * 2 , config.output_size)
+
+    def forward(self, input_rep, labels):
+        out = self.aggregate(input_rep)
+        loss_fc = nn.CrossEntropyLoss()
+        loss = loss_fc(out, labels)
         return loss
-        

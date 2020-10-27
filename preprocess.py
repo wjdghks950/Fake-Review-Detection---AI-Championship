@@ -6,7 +6,8 @@ import logging
 import re
 import torch
 from torch.utils.data import TensorDataset
-from collections import defaultdict
+# from collections import defaultdict
+# import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class OrderExample(object):
         cpn_use_cnt=None,
         ord_dt=None,
         abuse_yn=None,
-        abuse_type=None,
+        abuse_class=None,
     ):
         self.mem_no = mem_no
         self.dvc_id = dvc_id
@@ -55,7 +56,7 @@ class OrderExample(object):
         self.cpn_use_cnt = cpn_use_cnt
         self.ord_dt = ord_dt
         self.abuse_yn = abuse_yn
-        self.abuse_type = abuse_type
+        self.abuse_class = abuse_class
 
     def __repr__(self):
         sample_str = "\nShop_no: {}\nOrder_dt: {}\n".format(self.shop_no, self.ord_dt)
@@ -68,8 +69,8 @@ class OrderExample(object):
 
 class OrderFeatures(object):
     """A single data sample features"""
-    def __init__(self, shop_no, input_ids, nontext_features, attention_mask, token_type_ids, label_id):
-        self.shop_no = shop_no  # will serve as an `id` for per-shop_no embedding
+    def __init__(self, input_ids, nontext_features=None, attention_mask=None, token_type_ids=None, label_id=None):
+        # self.shop_no = shop_no  # will serve as an `id` for per-shop_no embedding
         self.input_ids = input_ids
         self.nontext_features = nontext_features
         self.attention_mask = attention_mask
@@ -100,6 +101,9 @@ class BaeminProcessor(object):
             data_reader = csv.reader(fp)
             headers = next(data_reader)
             print(headers)
+            if "shop_no" in headers[0]:
+                headers[0] = 'shop_no'
+                print("Headers (dev) >> ", headers)
             df = pd.DataFrame(columns=headers)
             for i, row in enumerate(tqdm(data_reader)):
                 df.loc[i] = row[:24]
@@ -111,7 +115,7 @@ class BaeminProcessor(object):
 
     def _create_examples(self, input_data, mode):
         examples = []
-        vocab_shop_no = defaultdict(list)
+        vocab_shop_no = {}
         if mode == "train":
             num_data = input_data.shape[0]
             # Extract a single instance
@@ -141,25 +145,22 @@ class BaeminProcessor(object):
                         ord_dt=ord_instance['ord_dt']
                     )
                     examples.append(example)
-                    # if ord_instance['shop_no'] not in vocab_shop_no:
-                    vocab_shop_no[ord_instance['shop_no']] = None  # Creating a vocab_shop_no
+                    vocab_shop_no[example.shop_no] = None
             print("[Data Example List Created.]\n")
             print('Dataset length: ', len(examples))
-            print("Unique shop_no: ", len(vocab_shop_no))
 
         elif mode == "dev" or mode == "test":
             num_data = input_data.shape[0]
             for i in tqdm(range(num_data), desc="(Dev) Create Baemin Order Samples"):
                 ord_instance = input_data.iloc[i]
+                print("ord_instance[shop_no]: ", ord_instance)
                 example = OrderExample(
                     shop_no=ord_instance['shop_no'],  # prime input
                     ord_dt=ord_instance['ord_dt'],
                     abuse_yn=ord_instance['abuse_yn'],
-                    abuse_type=ord_instance['abuse_type']
+                    abuse_class=ord_instance['abuse_class']
                 )
                 examples.append(example)
-                vocab_shop_no[ord_instance['shop_no']] = None
-                # TODO: Implement for validation.csv
 
         return examples, vocab_shop_no
 
@@ -195,21 +196,28 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
                                  pad_token_segment_id=0,
                                  sequence_a_segment_id=0,
                                  mask_padding_with_zero=True,
-                                 mode="train"):
+                                 mode=None):
+    print("Current mode >> {}\n".format(mode))
+    cls_token = tokenizer.cls_token  # cls_token_id == 2
+    sep_token = tokenizer.sep_token  # sep_token_id == 3
+    pad_token_id = tokenizer.pad_token_id  # pad_token_id == 1
+    # print('cls_token >> ', cls_token)
+    # print('sep_token >> ', sep_token)
+    # print('pad_token_id >> ', pad_token_id)
+    
+    features = []
     if mode == "train":
         # Setting based on the current model type
-        cls_token = tokenizer.cls_token
-        sep_token = tokenizer.sep_token
-        pad_token_id = tokenizer.pad_token_id
-
-        features = []
         for (ex_index, example) in tqdm(enumerate(examples)):
             if ex_index % 5000 == 0:
                 logger.info("Writing example %d of %d" % (ex_index, len(examples)))
-            tokens = tokenizer.tokenize(' '.join([example.ord_msg, example.item_name])) # TODO: tokenize textual data
+            tokens = tokenizer.tokenize(' '.join([example.ord_msg, example.item_name]))
+
+            # Add `shop_no` to vocabulary via `tokenizer.add_tokens("new_token" or list of tokens)`
+            # tokenizer.add_tokens(example.shop_no)
 
             # Account for [CLS] and [SEP]
-            special_tokens_count = 2
+            special_tokens_count = 3
             if len(tokens) > max_seq_len - special_tokens_count:
                 tokens = tokens[:(max_seq_len - special_tokens_count)]
 
@@ -218,11 +226,12 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
             token_type_ids = [sequence_a_segment_id] * len(tokens)
             
             # Add [CLS] token
-            tokens = [cls_token] + tokens
+            tokens = [cls_token] + [example.shop_no[:10]] + [sep_token] + tokens
+            token_type_ids += [sequence_a_segment_id] * 2
+
             cls_token_segment_id = 0
             token_type_ids = [cls_token_segment_id] + token_type_ids
             # print("Culprit! >> ", cls_token_segment_id) # TODO: Error: why is cls_token_segment_id == "train"?
-
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
             # The mask has 1 for real tokens and 0 for padding tokens. Only real
@@ -231,13 +240,16 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
 
             # Zero-pad up to the sequence length.
             padding_length = max_seq_len - len(input_ids)
-            input_ids = input_ids + ([pad_token_id] * padding_length)
-            attention_mask = attention_mask + ([0 if mask_padding_with_zero else 1] * padding_length)
-            token_type_ids = token_type_ids + ([pad_token_segment_id] * padding_length)
-
-            assert len(input_ids) == max_seq_len, "Error with input length {} vs {}".format(len(input_ids), max_seq_len)
-            assert len(attention_mask) == max_seq_len, "Error with attention mask length {} vs {}".format(len(attention_mask), max_seq_len)
-            assert len(token_type_ids) == max_seq_len, "Error with token type length {} vs {}".format(len(token_type_ids), max_seq_len)
+            input_ids = input_ids + ([pad_token_id] * padding_length) if padding_length >= 0 else input_ids[:max_seq_len]
+            # input_ids = input_ids + ([pad_token_id] * padding_length)
+            attention_mask = attention_mask + ([0 if mask_padding_with_zero else 1] * padding_length) if padding_length >= 0 else attention_mask[:max_seq_len]
+            token_type_ids = token_type_ids + ([pad_token_segment_id] * padding_length) if padding_length >= 0 else token_type_ids[:max_seq_len]
+            # print(tokenizer.convert_ids_to_tokens(input_ids))
+            # print(input_ids)
+            # print(len(input_ids))
+            assert len(input_ids) == max_seq_len, "(Train) Error with input length {} vs {}".format(len(input_ids), max_seq_len)
+            assert len(attention_mask) == max_seq_len, "(Train) Error with attention mask length {} vs {}".format(len(attention_mask), max_seq_len)
+            assert len(token_type_ids) == max_seq_len, "(Train) Error with token type length {} vs {}".format(len(token_type_ids), max_seq_len)
 
             # Non-text input (item_quantity, cpn_use_cnt, ord_price, rating)
             # TODO: These features need normalization (except for binary features)
@@ -275,8 +287,7 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
                 logger.info("label: %s" % (label_id))
 
             features.append(
-                OrderFeatures(shop_no=example.shop_no,
-                              input_ids=input_ids,
+                OrderFeatures(input_ids=input_ids,
                               nontext_features=nontext_features,
                               attention_mask=attention_mask,
                               token_type_ids=token_type_ids,
@@ -284,7 +295,71 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
                             ))
 
     elif mode == "dev" or "test":
-        pass
+        # shop_no, ord_dt, abuse_yn, abuse_class
+        for (ex_index, example) in tqdm(enumerate(examples)):
+            if ex_index % 5000 == 0:
+                logger.info("Writing example %d of %d" % (ex_index, len(examples)))
+
+            # Add `shop_no` to vocabulary via `tokenizer.add_tokens("new_token" or list of tokens)`
+            tokens = tokenizer.tokenize(example.shop_no[:10])
+
+            # Account for [CLS] and [SEP]
+            special_tokens_count = 2
+            if len(tokens) > max_seq_len - special_tokens_count:
+                tokens = tokens[:(max_seq_len - special_tokens_count)]
+
+            # Add [SEP] token
+            tokens += [sep_token]
+            token_type_ids = [sequence_a_segment_id] * len(tokens)
+            
+            # Add [CLS] token
+            tokens = [cls_token] + tokens
+            cls_token_segment_id = 0
+            token_type_ids = [cls_token_segment_id] + token_type_ids
+            # print("Culprit! >> ", cls_token_segment_id) # TODO: Error: why is cls_token_segment_id == "train"?
+            input_ids = tokenizer.convert_tokens_to_ids(tokens)
+
+            # The mask has 1 for real tokens and 0 for padding tokens. Only real
+            # tokens are attended to.
+            attention_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
+
+            # Zero-pad up to the sequence length.
+            padding_length = max_seq_len - len(input_ids)
+            input_ids = input_ids + ([pad_token_id] * padding_length)
+            attention_mask = attention_mask + ([0 if mask_padding_with_zero else 1] * padding_length)
+            token_type_ids = token_type_ids + ([pad_token_segment_id] * padding_length)
+
+            assert len(input_ids) == max_seq_len, "(Dev) Error with input length {} vs {}".format(len(input_ids), max_seq_len)
+            assert len(attention_mask) == max_seq_len, "(Dev) Error with attention mask length {} vs {}".format(len(attention_mask), max_seq_len)
+            assert len(token_type_ids) == max_seq_len, "(Dev) Error with token type length {} vs {}".format(len(token_type_ids), max_seq_len)
+
+            label_id = 0
+            if example.abuse_yn != "0":
+                if example.abuse_class == "1":
+                    label_id = 1
+                elif example.abuse_class == "2":
+                    label_id = 2
+                elif example.abuse_class == "3":
+                    label_id = 3
+                else:
+                    raise Exception("Only labels 0, 1, 2 and 3 are available  >> Error label_id: {}".format(example.abuse_class))
+
+            if ex_index < 5:
+                logger.info("*** Example ***")
+                logger.info("shop_no: %s" % example.shop_no)
+                logger.info("tokens: %s" % " ".join([str(x) for x in tokens]))
+                logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+                logger.info("attention_mask: %s" % " ".join([str(x) for x in attention_mask]))
+                logger.info("token_type_ids: %s" % " ".join([str(x) for x in token_type_ids]))
+                logger.info("label: %s" % (label_id))
+
+            features.append(
+                OrderFeatures(input_ids=input_ids,
+                              attention_mask=attention_mask,
+                              token_type_ids=token_type_ids,
+                              label_id=label_id
+                            )
+            )      
 
     return features
 
@@ -297,41 +372,41 @@ def load_and_cache_examples(args, tokenizer, mode):
     cached_file_name = 'cached_{}_{}_{}_{}'.format(
         args.task, list(filter(None, args.model_name_or_path.split("/"))).pop(), args.max_seq_len, mode)
 
-    cached_vocabs_name = 'cached_{}_{}_{}_{}'.format(
-        args.task, list(filter(None, args.model_name_or_path.split("/"))).pop(), "vocabs", mode)
-
     cached_features_file = os.path.join(args.data_dir, cached_file_name)
-    cached_vocabs_file = os.path.join(args.data_dir, cached_vocabs_name)
-    if os.path.exists(cached_features_file) and os.path.exists(cached_vocabs_file):
+    vocab_size = 8002
+    if os.path.exists(cached_features_file):
         logger.info("Loading features from cached file %s", cached_features_file)
         features = torch.load(cached_features_file)
-        vocab_shop_no = torch.load(cached_vocabs_file)
     else:
         logger.info("Creating features from dataset file at %s", args.data_dir)
         if mode == "train":
             examples, vocab_shop_no = processor.get_examples("train")
+            # vocab_shop_no_size = len(vocab_shop_no.keys())
+            # vocab_size += vocab_shop_no_size
+            # if vocab_shop_no_size > 0:
+            #     tokenizer.add_tokens(vocab_shop_no.keys())
         elif mode == "dev":
-            examples, vocab_shop_no = processor.get_examples("dev")
+            examples, _ = processor.get_examples("dev")
         elif mode == "test":
-            examples, vocab_shop_no = processor.get_examples("test")
+            examples, _ = processor.get_examples("test")
         else:
             raise Exception("ModeError: Only train, dev and test modes are available")
+        print("[ load_and_cache_examples: Mode >> {} ]".format(mode))
 
-        features = convert_examples_to_features(examples, args.max_seq_len, tokenizer, mode)
+        features = convert_examples_to_features(examples, args.max_seq_len, tokenizer, mode=mode)
         logger.info("Saving features into cached file %s", cached_features_file)
         torch.save(features, cached_features_file)
 
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-    all_nontext_features = torch.tensor([f.nontext_features for f in features], dtype=torch.float)
     all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
     all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
     all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
-    print('all_input_ids: ', all_input_ids.shape)
-    print('all_label_ids: ', all_label_ids.shape)
-
-    dataset = TensorDataset(all_input_ids, all_nontext_features, all_attention_mask,
-                            all_token_type_ids, all_label_ids)
+    if mode == "train":
+        all_nontext_features = torch.tensor([f.nontext_features for f in features], dtype=torch.float)
+        dataset = TensorDataset(all_input_ids, all_nontext_features, all_attention_mask, all_token_type_ids, all_label_ids)
+    elif mode == "dev" or mode == "test":
+        dataset = TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_label_ids)
 
     print("Dataset Preprocessing Complete!")
-    return dataset, vocab_shop_no
+    return dataset, vocab_size

@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from transformers import AdamW, get_linear_schedule_with_warmup
-from model import NumberPretrainerConfig, NumberPretrainer
+from model import NumberPretrainerConfig, NumberPretrainer, Aggregator
 import neptune
 
 from utils import compute_metrics, get_label, MODEL_CLASSES
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class Trainer(object):
-    def __init__(self, args, train_dataset=None, dev_dataset=None, test_dataset=None):
+    def __init__(self, args, train_dataset=None, dev_dataset=None, test_dataset=None, vocab_size=8002):
         self.args = args
         self.train_dataset = train_dataset
         self.dev_dataset = dev_dataset
@@ -25,10 +25,11 @@ class Trainer(object):
         self.num_labels = len(self.label_lst)
 
         self.config_numpre = NumberPretrainerConfig()
-
         self.numpre_model = NumberPretrainer(self.config_numpre)
-        self.config_class, self.model_class, _ = MODEL_CLASSES[args.model_type]
+        self.aggregator = Aggregator(self.config_numpre)
 
+        self.config_class, self.model_class, _ = MODEL_CLASSES[args.model_type]
+        # TODO: Revise the `vocab_size` after adding the shop_no
         self.config = self.config_class.from_pretrained(args.model_name_or_path,
                                                         num_labels=self.num_labels, 
                                                         finetuning_task=args.task)
@@ -42,6 +43,7 @@ class Trainer(object):
         self.device = "cuda:0" if torch.cuda.is_available() and not args.no_cuda else "cpu"
         print("Running on : [{}]".format(self.device))
         self.bert.to(self.device)
+        self.numpre_model.to(self.device)
         print("Pre-Trained model loading complete!")
 
     def train(self):
@@ -85,16 +87,21 @@ class Trainer(object):
             for step, batch in enumerate(epoch_iterator):
                 self.bert.train()
                 batch = tuple(t.to(self.device) for t in batch)  # GPU or CPU
-                numpre_inputs = {'input_val': batch[2], 'labels': batch[5]}
-                bert_inputs = {'input_ids': batch[1],
-                          'attention_mask': batch[3],
-                          'labels': batch[5]}
+                numpre_inputs = {'input_val': batch[1], 'labels': batch[4]}
+                bert_inputs = {'input_ids': batch[0],
+                               'attention_mask': batch[2],
+                               'labels': batch[4]}
                 if self.args.model_type != 'distilkobert':
-                    bert_inputs['token_type_ids'] = batch[4]
+                    bert_inputs['token_type_ids'] = batch[3]
                 outputs = self.bert(**bert_inputs)
-                numpre_loss = self.numpre_model(numpre_inputs)  # NumberPretrainer loss
+                numpre_out, numpre_loss = self.numpre_model(**numpre_inputs)  # NumberPretrainer loss
                 loss = outputs[0]  # BertForSequenceClassification loss
-
+                bert_rep = outputs[1]  # `logits` from BertForSequenceClassification
+                aggregator_input = torch.cat((bert_rep, numpre_out), 1)
+                # print("bert_rep (shape): ", bert_rep.shape)
+                # print("numpre_out (shape): ", numpre_out.shape)
+                # print("aggregator_input (shape): ", aggregator_input.shape)
+                
                 combined_loss = numpre_loss + loss  # Multi-task loss
 
                 if self.args.logger:

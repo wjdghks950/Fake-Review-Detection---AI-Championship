@@ -20,6 +20,7 @@ def set_argument():
     parser.add_argument("--model_name_or_path", default="monologg/kobert", type=str, help="Model Name")
     parser.add_argument('--seed', default=42, type=int, help="random seed for initialization")
 
+    parser.add_argument("--shop_no_size", default=0, type=int, help="Number of unique shop_no")
     parser.add_argument("--train_batch_size", default=32, type=int, help="Batch size for training.")
     parser.add_argument("--eval_batch_size", default=64, type=int, help="Batch size for evaluation.")
     parser.add_argument("--max_seq_len", default=50, type=int, help="The maximum total input sequence length after tokenization.")
@@ -55,11 +56,10 @@ def main(args):
         neptune.append_tag("BertForSequenceClassification", "finetuning", "fake detection")
 
     tokenizer = load_tokenizer(args)
-    train_dataset = load_and_cache_examples(args, tokenizer, mode="train")
-    # TODO: dev_dataset = load_and_cache_examples(args, tokenizer, mode="dev")
+    train_dataset, vocab_size = load_and_cache_examples(args, tokenizer, mode="train")
+    dev_dataset, _ = load_and_cache_examples(args, tokenizer, mode="dev")
     # test_dataset = load_and_cache_examples(args, tokenizer, mode="test")
-    # TODO: trainer = Trainer(args, train_dataset, dev_dataset, test_dataset)
-    trainer = Trainer(args, train_dataset)
+    trainer = Trainer(args, train_dataset, dev_dataset, vocab_size=vocab_size)  # TODO: trainer = Trainer(args, train_dataset, dev_dataset, test_dataset)
 
     if args.do_train:
         trainer.train()
