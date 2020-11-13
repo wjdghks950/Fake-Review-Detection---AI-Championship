@@ -37,8 +37,7 @@ MODEL_PATH_MAP = {
 
 
 def get_label(args):
-    # return [0, 1]
-    return [0, 1, 2, 3]
+    return [0, 1]  # return [0, 1, 2, 3]
 
 
 def load_tokenizer(args):
