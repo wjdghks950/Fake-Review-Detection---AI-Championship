@@ -24,7 +24,7 @@ class Trainer(object):
         self.label_lst = get_label(args)
         self.num_labels = len(self.label_lst)
 
-        self.config_numpre = NumberPretrainerConfig()
+        self.config_numpre = NumberPretrainerConfig(output_size=self.num_labels)
         self.numpre_model = NumberPretrainer(self.config_numpre)
         self.aggregator = Aggregator(self.config_numpre)
 
@@ -32,9 +32,8 @@ class Trainer(object):
         # TODO: Revise the `vocab_size` after adding the shop_no
         self.config = self.config_class.from_pretrained(args.model_name_or_path,
                                                         num_labels=self.num_labels, 
-                                                        finetuning_task=args.task)
-                                                        # id2label={str(i): label for i, label in enumerate(self.label_lst)},
-                                                        # label2id={label: i for i, label in enumerate(self.label_lst)})
+                                                        finetuning_task=args.task,
+                                                        output_hidden_states=True, output_attentions=True)
         print("Config loading complete!")
         self.bert = self.model_class(self.config)
         print("Current model: [{}]".format(self.bert))
@@ -77,12 +76,14 @@ class Trainer(object):
         logger.info("  Save steps = %d", self.args.save_steps)
 
         global_step = 0
-        tr_loss = 0.0
         self.bert.zero_grad()
 
         train_iterator = trange(int(self.args.num_train_epochs), desc="Epoch")
 
         for _ in train_iterator:
+            tr_loss = 0.0
+            tr_numpre_loss = 0.0
+            tr_combined_loss = 0.0
             epoch_iterator = tqdm(train_dataloader, desc="Iteration")
             for step, batch in enumerate(epoch_iterator):
                 self.bert.train()
@@ -94,10 +95,11 @@ class Trainer(object):
                 if self.args.model_type != 'distilkobert':
                     bert_inputs['token_type_ids'] = batch[3]
                 outputs = self.bert(**bert_inputs)
+                loss = outputs[0]  # `loss` BertForSequenceClassification
+                bert_logits = outputs[1]  # `logits` from BertForSequenceClassification
+                bert_hidden_states = outputs[2][0]
                 numpre_out, numpre_loss = self.numpre_model(**numpre_inputs)  # NumberPretrainer loss
-                loss = outputs[0]  # BertForSequenceClassification loss
-                bert_rep = outputs[1]  # `logits` from BertForSequenceClassification
-                aggregator_input = torch.cat((bert_rep, numpre_out), 1)
+                aggregator_input = torch.cat((bert_hidden_states, numpre_out), 1)
                 # print("bert_rep (shape): ", bert_rep.shape)
                 # print("numpre_out (shape): ", numpre_out.shape)
                 # print("aggregator_input (shape): ", aggregator_input.shape)
@@ -115,8 +117,11 @@ class Trainer(object):
                 loss.backward()
 
                 tr_loss += loss.item()
+                tr_numpre_loss += numpre_loss.item()
+                tr_combined_loss += combined_loss.item()
                 if (step + 1) % self.args.gradient_accumulation_steps == 0:
                     torch.nn.utils.clip_grad_norm_(self.bert.parameters(), self.args.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(self.numpre_model.parameters(), 0.5)  # TODO: Find appropriate args.max_grad_norm for self.numpre_model (=0.5 currently)
 
                     optimizer.step()
                     scheduler.step()  # Update learning rate schedule
@@ -128,6 +133,7 @@ class Trainer(object):
 
                     if self.args.save_steps > 0 and global_step % self.args.save_steps == 0:
                         self.save_model()
+                        logger.info("  Model saved at {}".format(self.args.model_dir))
 
                 if 0 < self.args.max_steps < global_step:
                     epoch_iterator.close()
@@ -136,6 +142,11 @@ class Trainer(object):
             if 0 < self.args.max_steps < global_step:
                 train_iterator.close()
                 break
+        
+            if self.args.logger:
+                neptune.log_metric('Training loss (per epoch)', tr_loss / len(self.train_dataset))
+                neptune.log_metric('Training Numpre loss (per epoch)', tr_numpre_loss / len(self.train_dataset))
+                neptune.log_metric('Training Combined loss (per epoch)', tr_combined_loss / len(self.train_dataset))
 
         return global_step, tr_loss / global_step
 
@@ -154,6 +165,7 @@ class Trainer(object):
         logger.info("***** Running evaluation on %s dataset *****", mode)
         logger.info("  Num examples = %d", len(dataset))
         logger.info("  Batch size = %d", self.args.eval_batch_size)
+        logger.info("  Dataset (dev) size = %d", len(dataset))
         eval_loss = 0.0
         nb_eval_steps = 0
         preds = None
@@ -169,8 +181,10 @@ class Trainer(object):
                           'labels': batch[3]}
                 if self.args.model_type != 'distilkobert':
                     inputs['token_type_ids'] = batch[2]
-                outputs = self.bert(**inputs)
+                outputs = self.bert(**inputs)   # (loss), logits, (hidden_states), (attentions)
                 tmp_eval_loss, logits = outputs[:2]
+                print("Hidden states (shape)", outputs)
+                exit()
 
                 eval_loss += tmp_eval_loss.mean().item()
             nb_eval_steps += 1
@@ -180,8 +194,7 @@ class Trainer(object):
                 out_label_ids = inputs['labels'].detach().cpu().numpy()
             else:
                 preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-                out_label_ids = np.append(
-                    out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
+                out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
 
         eval_loss = eval_loss / nb_eval_steps
         results = {
