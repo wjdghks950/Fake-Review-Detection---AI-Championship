@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import csv
 import os
 from tqdm import tqdm
@@ -80,37 +81,39 @@ class OrderFeatures(object):
     def __repr__(self):
         return "Shop_number: " + self.shop_no + "\n"
 
-    # def to_dict(self):
-    #     """Serializes this instance to a Python dictionary."""
-    #     output = copy.deepcopy(self.__dict__)
-    #     return output
-
-    # def to_json_string(self):
-    #     """Serializes this instance to a JSON string."""
-    #     return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
-
 
 class BaeminProcessor(object):
     """Processor for the woowahan data set """
     def __init__(self, args):
         self.args = args
+        # `shop_no` in the validation file that have `abuse_types`
+        self.shop_no_ex = ["0299E61C687A81580E217EC98EEA7743", "1ADEBC59634C2D13B170FB7E96D6C57F", "2F5014BCC29966F667AF555FA6FAB015", "2FF539B930397C6005F13A6AA6D31658", 
+            "33115FB448E2D821BCA3C41BE01E294F", "3660CD934F4C1BB184F39768CF08180B", "3F7B70727D3AACAF116FB5A805FC952C", "4B98850839AB4FBD95C3CCE889D59E94",
+            "5F039D1D6E7C3CF2E6786E3594DA8E9E", "604F7BC10755B4111D32CB2281873EB2", "6602304D32A9BBEA3C7E87C51DFF247A", "72660CFE9BF4AB00A4F01B1F5441B1AE",
+            "7B721777CECE119F097488CCF2BE7475", "7B9F043578B1DC1B35704E0CA76A2E30", "9FC6DAEFF7BB74B577ABD0CFD9ADF426", "A2DE5086981D6BA2B20A33C25E3A85CA",
+            "A2F966D6B4CA78689F95A6EC81F60F75", "B2066E681DC94C3C42AB2D83D2B5B0B4", "B9ACF3CBA5A0957F493D40BF169C3995", "BE7393A50ADE41B8E14B7AB50DA12C20",
+            "CD266107DE0619329079F63C8C85F3CD", "CDA834B36D0FCFF646F9BAD9226824B2", "E19B247FB7FB5C08A0F6789FEE3A47A1", "F94405DD8B1206EB522569957FFCFA27"]
 
-    @classmethod
-    def _read_file(cls, input_file, quotechar=None):
-        with open(input_file, "r") as fp:
-            data_reader = csv.reader(fp)
-            headers = next(data_reader)
-            print(headers)
-            if "shop_no" in headers[0]:
-                headers[0] = 'shop_no'
-                print("Headers (dev) >> ", headers)
-            df = pd.DataFrame(columns=headers)
-            for i, row in enumerate(tqdm(data_reader)):
-                df.loc[i] = row[:24]
-                if i > 1000:  # TODO: set to 1000 instances due to speed limit
-                    break
-        print("Data Length: ", df.shape[0])
-        print(df.iloc[0])
+    # @classmethod
+    def _read_file(self, input_file, quotechar=None):
+        # with open(input_file, "r") as fp:
+        #     data_reader = csv.reader(fp)
+        #     headers = next(data_reader)
+        #     if "shop_no" in headers[0]:
+        #         headers[0] = "shop_no"
+        #         print("Headers (dev) >> ", headers)
+        #     else:
+        #         print("Headers (train) >> ", headers)
+
+        #     df = pd.DataFrame(columns=headers)
+        #     for i, row in enumerate(tqdm(data_reader)):
+        #         df.loc[i] = row[:24]
+        #         # if i > 1000:  # TODO: set to 1000 instances due to speed limit
+        #         #     break
+        df = pd.read_csv(input_file)
+        df = df.dropna()
+        print("Data read complete (samples) >> ", df.iloc[:10])
+        print("Data Length >> ", df.shape[0])
         return df
 
     def _create_examples(self, input_data, mode):
@@ -190,7 +193,7 @@ def create_vocab(examples):
     # TODO: Create vocabs from `shop_no`
     pass
 
-# Reference: https://github.com/monologg/KoBERT-nsmc/blob/9c6f417748d82d7064b097e90030b1b68f351d9a/data_loader.py#L115
+
 def convert_examples_to_features(examples, max_seq_len, tokenizer,
                                  cls_token_segment_id=0,
                                  pad_token_segment_id=0,
@@ -211,12 +214,13 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
         for (ex_index, example) in tqdm(enumerate(examples)):
             if ex_index % 5000 == 0:
                 logger.info("Writing example %d of %d" % (ex_index, len(examples)))
+
             tokens = tokenizer.tokenize(' '.join([example.ord_msg, example.item_name]))
 
             # Add `shop_no` to vocabulary via `tokenizer.add_tokens("new_token" or list of tokens)`
             # tokenizer.add_tokens(example.shop_no)
 
-            # Account for [CLS] and [SEP]
+            # Account for [CLS] and [SEP] - Trim the token sequence
             special_tokens_count = 3
             if len(tokens) > max_seq_len - special_tokens_count:
                 tokens = tokens[:(max_seq_len - special_tokens_count)]
@@ -253,14 +257,21 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
 
             # Non-text input (item_quantity, cpn_use_cnt, ord_price, rating)
             # TODO: These features need normalization (except for binary features)
-            if example.item_quantity.isnumeric() and example.cpn_use_cnt.isnumeric() and example.ord_price.isnumeric():
-                item_quantity = int(example.item_quantity)
-                cpn_use_cnt = int(example.cpn_use_cnt)
-                ord_price = int(example.ord_price)
-                rating = int(float(example.rating)) if len(example.rating) < 3 else 0
+            if type(example.item_quantity) == str and type(example.cpn_use_cnt) == str and type(example.ord_price) == str:
+                if example.item_quantity.isnumeric() and example.cpn_use_cnt.isnumeric() and example.ord_price.isnumeric():
+                    item_quantity = int(example.item_quantity)
+                    cpn_use_cnt = int(example.cpn_use_cnt)
+                    ord_price = int(example.ord_price)
+                    rating = int(float(example.rating)) if len(example.rating) < 3 else 0
+                    nontext_features = [item_quantity, cpn_use_cnt, ord_price, rating]
+            elif type(example.item_quantity) == int and type(example.cpn_use_cnt) == int and type(example.ord_price) == int:
+                item_quantity = example.item_quantity
+                cpn_use_cnt = example.cpn_use_cnt
+                ord_price = example.ord_price
+                rating = int(float(example.rating)) if type(example.rating) == str and example.rating.isnumeric() else 0
                 nontext_features = [item_quantity, cpn_use_cnt, ord_price, rating]
             else:
-                continue  # TODO: Case for erroneous instances
+                continue
 
             '''
             1) Everything else is label `0`
@@ -268,14 +279,23 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
             3) If review_yn == 1 and (len(ord_msg) < 3 or ord_msg == null), then label `2` (review_fraud)
             4) If cpn_use_cnt == 0 and ord_price < 10000, then label `3` (coupon fraud)
             '''
+            # label_id = 0
+            # item_name_list = re.split(',|\+', example.item_name)
+            # if len(item_name_list) < 2 and int(example.ord_price) < 10000:
+            #     label_id = 1
+            # elif int(example.review_yn) == 1 and (len(example.ord_msg) < 3 or example.ord_msg == 'null'):
+            #     label_id = 2
+            # elif int(example.cpn_use_cnt) == 0 and int(example.ord_price) < 10000:
+            #     label_id = 3
+
+            # New labels according to `devliery_yn` =>  `배달` or `포장`
             label_id = 0
-            item_name_list = re.split(',|\+', example.item_name)
-            if len(item_name_list) < 2 and int(example.ord_price) < 10000:
+            if example.delivery_yn == "배달":
+                label_id = 0
+            elif example.delivery_yn == "배민오더":
                 label_id = 1
-            elif int(example.review_yn) == 1 and (len(example.ord_msg) < 3 or example.ord_msg == 'null'):
-                label_id = 2
-            elif int(example.cpn_use_cnt) == 0 and int(example.ord_price) < 10000:
-                label_id = 3
+            else:
+                label_id = 1
 
             if ex_index < 5:
                 logger.info("*** Example ***")
@@ -301,7 +321,7 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
                 logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
             # Add `shop_no` to vocabulary via `tokenizer.add_tokens("new_token" or list of tokens)`
-            tokens = tokenizer.tokenize(example.shop_no[:10])
+            tokens = tokenizer.tokenize(example.shop_no)
 
             # Account for [CLS] and [SEP]
             special_tokens_count = 2
@@ -316,7 +336,7 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
             tokens = [cls_token] + tokens
             cls_token_segment_id = 0
             token_type_ids = [cls_token_segment_id] + token_type_ids
-            # print("Culprit! >> ", cls_token_segment_id) # TODO: Error: why is cls_token_segment_id == "train"?
+            
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
             # The mask has 1 for real tokens and 0 for padding tokens. Only real
@@ -333,16 +353,26 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
             assert len(attention_mask) == max_seq_len, "(Dev) Error with attention mask length {} vs {}".format(len(attention_mask), max_seq_len)
             assert len(token_type_ids) == max_seq_len, "(Dev) Error with token type length {} vs {}".format(len(token_type_ids), max_seq_len)
 
+            # label_id = 0
+            # if example.abuse_yn != "0":
+            #     if example.abuse_class == "1":
+            #         label_id = 1
+            #     elif example.abuse_class == "2":
+            #         label_id = 2
+            #     elif example.abuse_class == "3":
+            #         label_id = 3
+            #     else:
+            #         raise Exception("Only labels 0, 1, 2 and 3 are available  >> Error label_id: {}".format(example.abuse_class))
+
+            # New labels according to `devliery_yn` =>  `배달` or `포장`
             label_id = 0
-            if example.abuse_yn != "0":
-                if example.abuse_class == "1":
-                    label_id = 1
-                elif example.abuse_class == "2":
-                    label_id = 2
-                elif example.abuse_class == "3":
-                    label_id = 3
-                else:
-                    raise Exception("Only labels 0, 1, 2 and 3 are available  >> Error label_id: {}".format(example.abuse_class))
+            if example.delivery_yn == "배달":
+                label_id = 0
+            elif example.delivery_yn == "배민오더":
+                label_id = 1
+            else:
+                print("Warning: Erroneous `delivery_yn` feature. Skipping instance.")
+                continue
 
             if ex_index < 5:
                 logger.info("*** Example ***")
@@ -364,7 +394,6 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
     return features
 
 
-# TODO: Store the CLS representation produced by BERT as a representation for example.shop_no
 def load_and_cache_examples(args, tokenizer, mode):
     processor = processors[args.task](args)
 
@@ -381,10 +410,6 @@ def load_and_cache_examples(args, tokenizer, mode):
         logger.info("Creating features from dataset file at %s", args.data_dir)
         if mode == "train":
             examples, vocab_shop_no = processor.get_examples("train")
-            # vocab_shop_no_size = len(vocab_shop_no.keys())
-            # vocab_size += vocab_shop_no_size
-            # if vocab_shop_no_size > 0:
-            #     tokenizer.add_tokens(vocab_shop_no.keys())
         elif mode == "dev":
             examples, _ = processor.get_examples("dev")
         elif mode == "test":
