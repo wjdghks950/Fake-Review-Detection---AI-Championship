@@ -71,3 +71,24 @@ def acc_score(preds, labels):
     return {
         "acc": simple_accuracy(preds, labels),
     }
+
+
+def precision(pred, labels):
+    # tp / (tp + fp)
+    tp = sum((pred == 1) & (labels == 1))
+    fp = sum((pred == 1) & (labels == 0))
+    return tp / (tp + fp)
+
+
+def recall(pred, labels):
+    # tp / (tp + fn)
+    tp = sum((pred == 1) & (labels == 1))
+    fn = sum((pred == 0) & (labels == 1))
+    return tp / (tp + fn)
+
+
+def f1_score(pred, labels):
+    prec = precision(pred, labels)
+    rec = recall(pred, labels)
+    f1 = 2 * (prec * rec) / (prec + rec)
+    return f1
