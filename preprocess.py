@@ -96,22 +96,27 @@ class BaeminProcessor(object):
 
     # @classmethod
     def _read_file(self, input_file, quotechar=None):
-        # with open(input_file, "r") as fp:
-        #     data_reader = csv.reader(fp)
-        #     headers = next(data_reader)
-        #     if "shop_no" in headers[0]:
-        #         headers[0] = "shop_no"
-        #         print("Headers (dev) >> ", headers)
-        #     else:
-        #         print("Headers (train) >> ", headers)
+        if self.args.train_filepath == "train.csv":
+            # Handles erroneous row with more than 25 features
+            with open(input_file, "r") as fp:
+                data_reader = csv.reader(fp)
+                headers = next(data_reader)
+                if "shop_no" in headers[0]:
+                    headers[0] = "shop_no"
+                    print("Headers (dev) >> ", headers)
+                else:
+                    print("Headers (train) >> ", headers)
 
-        #     df = pd.DataFrame(columns=headers)
-        #     for i, row in enumerate(tqdm(data_reader)):
-        #         df.loc[i] = row[:24]
-        #         # if i > 1000:  # TODO: set to 1000 instances due to speed limit
-        #         #     break
-        df = pd.read_csv(input_file)
-        df = df.dropna()
+                df = pd.DataFrame(columns=headers)
+                for i, row in enumerate(tqdm(data_reader)):
+                    df.loc[i] = row[:24]
+                    # if i > 1000:  # TODO: set to 1000 instances due to speed limit
+                    #     break
+        elif self.args.train_filepath == "abuse_train.csv" or self.args.dev_filepath == "abuse_dev.csv":
+            df = pd.read_csv(input_file)
+            df = df.dropna()
+            df = df.drop(df.columns[:2], axis=1)  # Drop the `Unnamed` columns
+
         print("Data read complete (samples) >> ", df.iloc[:10])
         print("Data Length >> ", df.shape[0])
         return df
@@ -119,10 +124,10 @@ class BaeminProcessor(object):
     def _create_examples(self, input_data, mode):
         examples = []
         vocab_shop_no = {}
-        if mode == "train":
+        if mode == "train" or (self.args.dev_filepath == "abuse_dev.csv" and mode == "dev"):
             num_data = input_data.shape[0]
             # Extract a single instance
-            for i in tqdm(range(num_data), desc="(Train) Create Baemin Order Samples"):
+            for i in tqdm(range(num_data), desc="({}) Create Baemin Order Samples".format(mode)):
                 # Remove cancelled orders, no review instances (any other unnecessary attributes if any)
                 if input_data.iloc[i]['review_yn'] != '0' or input_data.iloc[i]['ord_prog_cd'] != "주문취소":
                     # print(input_data.iloc[i])
@@ -152,9 +157,9 @@ class BaeminProcessor(object):
             print("[Data Example List Created.]\n")
             print('Dataset length: ', len(examples))
 
-        elif mode == "dev" or mode == "test":
+        elif self.args.dev_filepath == "validation.csv" and (mode == "dev" or mode == "test"):
             num_data = input_data.shape[0]
-            for i in tqdm(range(num_data), desc="(Dev) Create Baemin Order Samples"):
+            for i in tqdm(range(num_data), desc="({}) Create Baemin Order Samples".format(mode)):
                 ord_instance = input_data.iloc[i]
                 # print("ord_instance[shop_no]: ", ord_instance)
                 example = OrderExample(
@@ -194,7 +199,7 @@ def create_vocab(examples):
     pass
 
 
-def convert_examples_to_features(examples, max_seq_len, tokenizer,
+def convert_examples_to_features(examples, max_seq_len, tokenizer, file_path,
                                  cls_token_segment_id=0,
                                  pad_token_segment_id=0,
                                  sequence_a_segment_id=0,
@@ -209,11 +214,12 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
     # print('pad_token_id >> ', pad_token_id)
     
     features = []
-    if mode == "train":
+    if mode == "train" or (file_path == "abuse_dev.csv" and mode == "dev"):
         # Setting based on the current model type
         for (ex_index, example) in tqdm(enumerate(examples)):
             if ex_index % 5000 == 0:
                 logger.info("Writing example %d of %d" % (ex_index, len(examples)))
+                logger.info("PATH %s" % (file_path))
 
             tokens = tokenizer.tokenize(' '.join([example.ord_msg, example.item_name]))
 
@@ -262,16 +268,20 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
                     item_quantity = int(example.item_quantity)
                     cpn_use_cnt = int(example.cpn_use_cnt)
                     ord_price = int(example.ord_price)
-                    rating = int(float(example.rating)) if len(example.rating) < 3 else 0
-                    nontext_features = [item_quantity, cpn_use_cnt, ord_price, rating]
             elif type(example.item_quantity) == int and type(example.cpn_use_cnt) == int and type(example.ord_price) == int:
                 item_quantity = example.item_quantity
                 cpn_use_cnt = example.cpn_use_cnt
                 ord_price = example.ord_price
-                rating = int(float(example.rating)) if type(example.rating) == str and example.rating.isnumeric() else 0
-                nontext_features = [item_quantity, cpn_use_cnt, ord_price, rating]
             else:
                 continue
+
+            if type(example.rating) == str and not example.rating.isnumeric():
+                rating = 0
+            elif type(example.rating) == str and example.rating.isnumeric():
+                rating = int(float(example.rating))
+            else:
+                rating = int(float(example.rating))
+            nontext_features = [item_quantity, cpn_use_cnt, ord_price, rating]
 
             '''
             1) Everything else is label `0`
@@ -288,7 +298,10 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
             # elif int(example.cpn_use_cnt) == 0 and int(example.ord_price) < 10000:
             #     label_id = 3
 
-            # New labels according to `devliery_yn` =>  `배달` or `포장`
+            '''
+            delivery_yn == "배달" , then label_id = 0
+            delivery_yn == "배민오더" , then label_id = 1
+            '''
             label_id = 0
             if example.delivery_yn == "배달":
                 label_id = 0
@@ -297,7 +310,7 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
             else:
                 label_id = 1
 
-            if ex_index < 5:
+            if ex_index < 10:
                 logger.info("*** Example ***")
                 logger.info("shop_no: %s" % example.shop_no)
                 logger.info("tokens: %s" % " ".join([str(x) for x in tokens]))
@@ -371,10 +384,9 @@ def convert_examples_to_features(examples, max_seq_len, tokenizer,
             elif example.delivery_yn == "배민오더":
                 label_id = 1
             else:
-                print("Warning: Erroneous `delivery_yn` feature. Skipping instance.")
-                continue
+                label_id = 1
 
-            if ex_index < 5:
+            if ex_index < 10:
                 logger.info("*** Example ***")
                 logger.info("shop_no: %s" % example.shop_no)
                 logger.info("tokens: %s" % " ".join([str(x) for x in tokens]))
@@ -418,7 +430,9 @@ def load_and_cache_examples(args, tokenizer, mode):
             raise Exception("ModeError: Only train, dev and test modes are available")
         print("[ load_and_cache_examples: Mode >> {} ]".format(mode))
 
-        features = convert_examples_to_features(examples, args.max_seq_len, tokenizer, mode=mode)
+        file_path = args.dev_filepath if mode == "dev" else args.train_filepath
+
+        features = convert_examples_to_features(examples, args.max_seq_len, tokenizer, file_path=file_path, mode=mode)
         logger.info("Saving features into cached file %s", cached_features_file)
         torch.save(features, cached_features_file)
 
@@ -427,7 +441,7 @@ def load_and_cache_examples(args, tokenizer, mode):
     all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
     all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
     all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
-    if mode == "train":
+    if mode == "train" or (args.dev_filepath == "abuse_dev.csv" and mode == "dev"):
         all_nontext_features = torch.tensor([f.nontext_features for f in features], dtype=torch.float)
         dataset = TensorDataset(all_input_ids, all_nontext_features, all_attention_mask, all_token_type_ids, all_label_ids)
     elif mode == "dev" or mode == "test":
