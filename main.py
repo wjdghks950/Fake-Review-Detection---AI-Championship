@@ -11,8 +11,8 @@ def set_argument():
     parser.add_argument("--data_dir", default="./data", type=str, help="Training dataset directory")
     parser.add_argument("--task", default="baemin", type=str, help="Task to handle")
     parser.add_argument("--mode", default="train", type=str, help="Execution type")
-    parser.add_argument("--train_filepath", default="train.csv", type=str, help="File Path")
-    parser.add_argument("--dev_filepath", default="validation.csv", type=str, help="File Path")
+    parser.add_argument("--train_filepath", default="abuse_train.csv", type=str, help="File Path")  # Use `abuse_train.csv` which contains the `shop_no` with abuse patterns
+    parser.add_argument("--dev_filepath", default="abuse_dev.csv", type=str, help="File Path")
     parser.add_argument("--test_filepath", default="test.csv", type=str, help="File Path")
     parser.add_argument("--model_dir", default="./model", type=str, help="Path to save, load model")
     
@@ -25,7 +25,7 @@ def set_argument():
     parser.add_argument("--eval_batch_size", default=64, type=int, help="Batch size for evaluation.")
     parser.add_argument("--max_seq_len", default=50, type=int, help="The maximum total input sequence length after tokenization.")
     parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
-    parser.add_argument("--num_train_epochs", default=5.0, type=float, help="Total number of training epochs to perform.")
+    parser.add_argument("--num_train_epochs", default=20.0, type=float, help="Total number of training epochs to perform.")
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight decay if we apply some.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
@@ -34,8 +34,8 @@ def set_argument():
     parser.add_argument("--max_steps", default=-1, type=int, help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
-    parser.add_argument('--logging_steps', type=int, default=2000, help="Log every X updates steps.")
-    parser.add_argument('--save_steps', type=int, default=2000, help="Save checkpoint every X updates steps.")
+    parser.add_argument('--logging_steps', type=int, default=500, help="Log every X updates steps.")
+    parser.add_argument('--save_steps', type=int, default=200, help="Save checkpoint every X updates steps.")
 
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the test set.")
@@ -58,16 +58,13 @@ def main(args):
     tokenizer = load_tokenizer(args)
     train_dataset, vocab_size = load_and_cache_examples(args, tokenizer, mode="train")
     dev_dataset, _ = load_and_cache_examples(args, tokenizer, mode="dev")
-    # test_dataset = load_and_cache_examples(args, tokenizer, mode="test")
-    trainer = Trainer(args, train_dataset, dev_dataset, vocab_size=vocab_size)  # TODO: trainer = Trainer(args, train_dataset, dev_dataset, test_dataset)
+    trainer = Trainer(args, train_dataset, dev_dataset, vocab_size=vocab_size)
 
     if args.do_train:
         trainer.train()
 
-    # if args.do_eval:
-    #     trainer.load_model()
-    #     trainer.evaluate("test")
-    neptune.stop()
+    if args.logger:
+        neptune.stop()
 
 
 if __name__ == "__main__":
